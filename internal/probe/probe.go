@@ -27,9 +27,19 @@ type Report struct {
 	HistoryToShip   int   // bytes that would be uploaded into the pod
 	HistoryFullSize int64 // total bytes on disk (may exceed ToShip if capped)
 	LocalTERM       string
-	RCSources       []string // empty => no rcfile sourced
-	SkippedShLines  []int    // lines suppressed in sh-mode (alias-only)
+	ShellrcSources  []string         // shellrc files actually read
+	AliasesImported int              // count of aliases successfully parsed
+	ExportsImported int              // count of simple exports successfully parsed
+	ShellrcSkipped  []SkippedShellrc // parser couldn't extract a literal value
+	Opportunistic   bool             // whether the in-pod fallback is on
 	FinalCommand    []string
+}
+
+// SkippedShellrc is the probe-level view of a shellparse.SkippedLine.
+// Kept narrow so package probe doesn't have to depend on shellparse.
+type SkippedShellrc struct {
+	Path, Reason string
+	Line         int
 }
 
 // Render writes a multi-section probe report to w, ending with the Konch
@@ -58,22 +68,33 @@ func Render(w io.Writer, r Report) {
 	}
 	p("")
 	switch {
-	case len(r.RCSources) == 0:
-		p("rcfile:       (none — starting plain shell)")
+	case len(r.ShellrcSources) == 0:
+		p("shellrc:      (none found — your aliases won't be imported)")
 	case r.Shell == shell.Sh:
-		p("rcfile sources (found, but NOT sourced — sh-mode in v0.1):")
-		for _, s := range r.RCSources {
+		p("shellrc:      found but NOT sourced (sh-mode; bash required for alias injection)")
+		for _, s := range r.ShellrcSources {
 			p("  - %s", s)
 		}
 	default:
-		p("rcfile sources (merged in order, last wins):")
-		for _, s := range r.RCSources {
+		p("shellrc sources:")
+		for _, s := range r.ShellrcSources {
 			p("  - %s", s)
 		}
+		p("imported:     %d aliases, %d exports%s",
+			r.AliasesImported, r.ExportsImported,
+			ternary(r.Opportunistic, " (with opportunistic fallback)", ""))
 	}
-	if len(r.SkippedShLines) > 0 {
+	if len(r.ShellrcSkipped) > 0 {
 		p("")
-		p("sh-mode would skip alias-only lines: %s", joinInts(r.SkippedShLines))
+		p("shellrc lines konch couldn't translate (%d):", len(r.ShellrcSkipped))
+		maxShow := 5
+		for i, s := range r.ShellrcSkipped {
+			if i >= maxShow {
+				p("  ... %d more", len(r.ShellrcSkipped)-maxShow)
+				break
+			}
+			p("  - %s:%d  %s", s.Path, s.Line, s.Reason)
+		}
 	}
 	p("")
 	p("Command that would be exec'd:")
@@ -95,12 +116,11 @@ func or(s, fallback string) string {
 	return s
 }
 
-func joinInts(ns []int) string {
-	parts := make([]string, len(ns))
-	for i, n := range ns {
-		parts[i] = fmt.Sprintf("%d", n)
+func ternary(cond bool, ifTrue, ifFalse string) string {
+	if cond {
+		return ifTrue
 	}
-	return strings.Join(parts, ", ")
+	return ifFalse
 }
 
 // quoteForDisplay puts single quotes around args that contain whitespace or

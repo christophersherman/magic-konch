@@ -7,9 +7,12 @@ package main
 
 import (
 	"errors"
+	"fmt"
 
 	"github.com/spf13/cobra"
 	"k8s.io/cli-runtime/pkg/genericiooptions"
+
+	"github.com/christophersherman/magic-konch/internal/cliinit"
 )
 
 var errNotYetImplemented = errors.New("not yet implemented in this v0.2 build — see CLAUDE.md for the roadmap")
@@ -17,18 +20,24 @@ var errNotYetImplemented = errors.New("not yet implemented in this v0.2 build �
 func newInitCmd(streams genericiooptions.IOStreams) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "init <shell>",
-		Short: "Print a shell function that intercepts `kubectl exec`.",
+		Short: "Print a shell function that intercepts kubectl exec.",
 		Long: `Emit a shell function that wraps kubectl. After ` + "`eval \"$(konch init bash)\"`" + `
-in your shellrc, typing ` + "`kubectl exec -it <pod> -- bash`" + ` routes through
-konch transparently — your shellrc aliases follow you in, history
+in your shellrc, typing ` + "`kubectl exec -it <pod> -- bash`" + ` routes
+through konch transparently — your shellrc aliases follow you in, history
 persists by workload, KONCH_* env vars are set.
 
 Supported shells: bash (zsh and fish coming in v0.2.x).`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
-			_ = streams
-			_ = args
-			return errNotYetImplemented
+			switch args[0] {
+			case "bash":
+				_, err := fmt.Fprint(streams.Out, cliinit.Bash())
+				return err
+			case "zsh", "fish":
+				return fmt.Errorf("shell %q is coming in v0.2.x — bash only for now", args[0])
+			default:
+				return fmt.Errorf("unsupported shell %q (try: bash)", args[0])
+			}
 		},
 	}
 	return cmd

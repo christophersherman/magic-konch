@@ -23,11 +23,12 @@ import (
 	"k8s.io/cli-runtime/pkg/genericiooptions"
 	"k8s.io/client-go/kubernetes"
 
+	"github.com/christophersherman/magic-konch/internal/config"
 	konchexec "github.com/christophersherman/magic-konch/internal/exec"
 	"github.com/christophersherman/magic-konch/internal/history"
 	"github.com/christophersherman/magic-konch/internal/probe"
-	"github.com/christophersherman/magic-konch/internal/rcfile"
 	"github.com/christophersherman/magic-konch/internal/shell"
+	"github.com/christophersherman/magic-konch/internal/shellparse"
 	"github.com/christophersherman/magic-konch/internal/workload"
 )
 
@@ -152,14 +153,22 @@ func runExec(
 		snap = history.Snapshot{}
 	}
 
-	rc, err := rcfile.Load(contextName)
-	if err != nil {
-		return err
+	konchCfg, _, konchCfgErr := config.Load()
+	if konchCfgErr != nil {
+		fmt.Fprintf(streams.ErrOut, "konch: warning: config: %v\n", konchCfgErr)
 	}
-	var skippedShLines []int
-	rcBytes := rc.Bytes
-	if sh == shell.Sh && len(rcBytes) > 0 {
-		rcBytes, skippedShLines = rcfile.SkipForSh(rcBytes)
+	sources := konchCfg.Shell.Sources
+	if len(sources) == 0 {
+		sources = shellparse.AutoDetectBashPaths()
+	}
+	parsed, parseErr := shellparse.ParseBash(sources)
+	if parseErr != nil {
+		fmt.Fprintf(streams.ErrOut, "konch: warning: shellrc parse: %v\n", parseErr)
+	}
+
+	var rcBytes []byte
+	if sh == shell.Bash {
+		rcBytes = buildRcfile(parsed, konchCfg.Aliases.Opportunistic)
 	}
 
 	localTERM := os.Getenv("TERM")
@@ -180,17 +189,20 @@ func runExec(
 			HistoryToShip:   len(snap.ToShip),
 			HistoryFullSize: snap.FullSize,
 			LocalTERM:       localTERM,
-			RCSources:       rc.Sources,
-			SkippedShLines:  skippedShLines,
+			ShellrcSources:  parsed.Sources,
+			AliasesImported: len(parsed.Aliases),
+			ExportsImported: len(parsed.Exports),
+			ShellrcSkipped:  toProbeSkipped(parsed.Skipped),
+			Opportunistic:   konchCfg.Aliases.Opportunistic,
 			FinalCommand:    finalCmd,
 		})
 		return nil
 	}
 
 	if sh == shell.Sh {
-		fmt.Fprintln(streams.ErrOut, "konch: bash not found, falling back to sh — your rcfile will not be sourced")
-	} else if rc.Empty {
-		fmt.Fprintln(streams.ErrOut, "konch: no rcfile found at ~/.config/konch/rc. Try asking again.")
+		fmt.Fprintln(streams.ErrOut, "konch: bash not found, falling back to sh — your shellrc aliases will not be imported")
+	} else if len(parsed.Aliases) == 0 && len(parsed.Exports) == 0 {
+		fmt.Fprintln(streams.ErrOut, "konch: no aliases or exports found in your shellrc. Try asking again.")
 	}
 
 	runErr := client.Run(ctx, target, konchexec.RunOptions{
@@ -336,6 +348,56 @@ PROMPT_COMMAND="history -a${PROMPT_COMMAND:+; $PROMPT_COMMAND}"
 
 func shellSingleQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
+}
+
+// buildRcfile turns parsed shellrc aliases + exports into a bash snippet
+// suitable for sourcing via `bash --rcfile <(...)`. Each value is single-
+// quoted with internal ' escaped, so even values containing shell metas
+// land literally. When opportunistic is true, a fallback block is
+// appended that drops each alias whose target isn't on PATH inside the
+// pod — `alias grep=rg` tries rg, falls back to the system grep if rg
+// isn't installed in the container.
+func buildRcfile(parsed shellparse.Result, opportunistic bool) []byte {
+	if len(parsed.Aliases) == 0 && len(parsed.Exports) == 0 {
+		return nil
+	}
+	var b strings.Builder
+	b.WriteString("# --- konch: imported from your shellrc ---\n")
+	for _, e := range parsed.Exports {
+		fmt.Fprintf(&b, "export %s=%s\n", e.Name, shellSingleQuote(e.Value))
+	}
+	for _, a := range parsed.Aliases {
+		fmt.Fprintf(&b, "alias %s=%s\n", a.Name, shellSingleQuote(a.Value))
+	}
+	if opportunistic && len(parsed.Aliases) > 0 {
+		b.WriteString("\n# --- konch: opportunistic fallback ---\n")
+		b.WriteString("# Drop aliases whose target isn't on PATH in this pod.\n")
+		for _, a := range parsed.Aliases {
+			target := firstWord(a.Value)
+			if target == "" {
+				continue
+			}
+			fmt.Fprintf(&b, "command -v %s >/dev/null 2>&1 || unalias %s 2>/dev/null\n",
+				shellSingleQuote(target), shellSingleQuote(a.Name))
+		}
+	}
+	return []byte(b.String())
+}
+
+func firstWord(s string) string {
+	s = strings.TrimLeft(s, " \t")
+	if i := strings.IndexAny(s, " \t"); i >= 0 {
+		return s[:i]
+	}
+	return s
+}
+
+func toProbeSkipped(in []shellparse.SkippedLine) []probe.SkippedShellrc {
+	out := make([]probe.SkippedShellrc, len(in))
+	for i, s := range in {
+		out[i] = probe.SkippedShellrc{Path: s.Path, Line: s.Line, Reason: s.Reason}
+	}
+	return out
 }
 
 func pullHistory(client *konchexec.Client, t konchexec.Target, localPath string, snap history.Snapshot) error {
