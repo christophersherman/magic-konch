@@ -1,9 +1,9 @@
-// kubectl-konch is the entrypoint for `kubectl konch`. It does the minimum
-// each invocation needs: resolve pod + container, walk to a workload key,
-// load the local rcfile, ship it (and the history file) into the pod via
-// env-vars on the exec command line, then run an interactive bash that
-// sources the rcfile via process substitution. On disconnect, history is
-// fetched back. Mechanism, not opinion.
+// root.go defines `konch <pod>`: the default per-session exec flow.
+// It resolves pod + container + workload, loads the user's shellrc (or,
+// in v0.1, the konch rcfile — to be replaced in phase-A5), ships content
+// into the pod via env vars, runs an interactive bash with the rcfile
+// sourced via process substitution, and on disconnect fetches history
+// back to the host. Mechanism, not opinion.
 package main
 
 import (
@@ -13,9 +13,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"os/signal"
 	"strings"
-	"syscall"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -24,7 +22,6 @@ import (
 	"k8s.io/cli-runtime/pkg/genericclioptions"
 	"k8s.io/cli-runtime/pkg/genericiooptions"
 	"k8s.io/client-go/kubernetes"
-	kexec "k8s.io/client-go/util/exec"
 
 	konchexec "github.com/christophersherman/magic-konch/internal/exec"
 	"github.com/christophersherman/magic-konch/internal/history"
@@ -40,36 +37,19 @@ var version = "dev"
 
 const longHelp = `Magic Konch — your shell, in the pod.
 
-A kubectl plugin that brings your local shell config into pods when you
-exec in. Your aliases follow you. Bash history survives pod restarts,
-keyed by the controlling Deployment/StatefulSet, not by pod hash.
+A quality-of-life tool that makes interactive pod exec feel like home.
+After one-line setup, your aliases follow you into pods and bash history
+is keyed by Deployment/StatefulSet/CronJob so it survives pod restarts.
 
-Konch ships no defaults. Whatever's in ~/.config/konch/rc is what runs.
+  konch <pod>              # exec into <pod>, default container
+  konch <pod> -c app       # pick a container
+  konch <pod> --probe      # dry-run; report what would happen
 
-  kubectl konch <pod>             # exec into <pod>, default container
-  kubectl konch <pod> -c app      # pick a container
-  kubectl konch <pod> --probe     # dry-run; report what would happen
-
-Per-context overrides: ~/.config/konch/rc.<kubectl-context-name>.
+The transparent kubectl-exec wrapper:
+  eval "$(konch init bash)"  # in ~/.bashrc / ~/.zshrc
+  # then  kubectl exec -it <pod> -- bash  routes through konch automatically
 
 All hail the Magic Konch.`
-
-func main() {
-	streams := genericiooptions.IOStreams{In: os.Stdin, Out: os.Stdout, ErrOut: os.Stderr}
-
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
-
-	cmd := newRootCmd(streams)
-	if err := cmd.ExecuteContext(ctx); err != nil {
-		var ce kexec.CodeExitError
-		if errors.As(err, &ce) {
-			os.Exit(ce.Code)
-		}
-		fmt.Fprintln(streams.ErrOut, "konch:", err)
-		os.Exit(1)
-	}
-}
 
 func newRootCmd(streams genericiooptions.IOStreams) *cobra.Command {
 	cf := genericclioptions.NewConfigFlags(true)
@@ -78,7 +58,7 @@ func newRootCmd(streams genericiooptions.IOStreams) *cobra.Command {
 		probeOnly bool
 	)
 	cmd := &cobra.Command{
-		Use:           "kubectl-konch <pod>",
+		Use:           "konch <pod>",
 		Short:         "Bring your shell into a pod.",
 		Long:          longHelp,
 		Version:       version,
@@ -86,7 +66,7 @@ func newRootCmd(streams genericiooptions.IOStreams) *cobra.Command {
 		SilenceUsage:  true,
 		SilenceErrors: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return run(cmd.Context(), streams, cf, args[0], container, probeOnly)
+			return runExec(cmd.Context(), streams, cf, args[0], container, probeOnly)
 		},
 	}
 	cmd.Flags().StringVarP(&container, "container", "c", "",
@@ -94,10 +74,17 @@ func newRootCmd(streams genericiooptions.IOStreams) *cobra.Command {
 	cmd.Flags().BoolVar(&probeOnly, "probe", false,
 		"dry-run: report what Konch would do, without exec'ing")
 	cf.AddFlags(cmd.Flags())
+
+	cmd.AddCommand(
+		newInitCmd(streams),
+		newSetupCmd(streams),
+		newHistoryCmd(streams),
+		newConfigCmd(streams),
+	)
 	return cmd
 }
 
-func run(
+func runExec(
 	ctx context.Context,
 	streams genericiooptions.IOStreams,
 	cf *genericclioptions.ConfigFlags,
@@ -137,8 +124,6 @@ func run(
 	client := konchexec.NewClient(cs, cfg)
 
 	probeFn := func(cmdLine []string) (string, int, error) {
-		// Probe execs are short — give them their own modest deadline so a
-		// stuck kubelet doesn't hang Konch start-up forever.
 		pctx, cancel := context.WithTimeout(ctx, 10*time.Second)
 		defer cancel()
 		return client.Probe(pctx, target, cmdLine)
@@ -163,7 +148,6 @@ func run(
 	}
 	snap, err := history.Read(histPath)
 	if err != nil {
-		// Read errors on history are non-fatal — start the session anyway.
 		fmt.Fprintf(streams.ErrOut, "konch: warning: read history %s: %v\n", histPath, err)
 		snap = history.Snapshot{}
 	}
@@ -215,8 +199,6 @@ func run(
 		TTY:     true,
 	})
 
-	// History fetch runs even after Ctrl-C / non-zero exit, on a fresh
-	// deadline detached from the (possibly cancelled) parent context.
 	if sh == shell.Bash {
 		if err := pullHistory(client, target, histPath, snap); err != nil {
 			fmt.Fprintf(streams.ErrOut, "konch: warning: save history: %v\n", err)
@@ -225,8 +207,17 @@ func run(
 	return runErr
 }
 
-// guardPodPhase rejects pods that aren't Running with a clear, actionable
-// message naming the actual phase.
+func resolveContextName(cf *genericclioptions.ConfigFlags) (string, error) {
+	if cf.Context != nil && *cf.Context != "" {
+		return *cf.Context, nil
+	}
+	raw, err := cf.ToRawKubeConfigLoader().RawConfig()
+	if err != nil {
+		return "", fmt.Errorf("load raw kubeconfig: %w", err)
+	}
+	return raw.CurrentContext, nil
+}
+
 func guardPodPhase(pod *corev1.Pod) error {
 	switch pod.Status.Phase {
 	case corev1.PodRunning:
@@ -241,19 +232,6 @@ func guardPodPhase(pod *corev1.Pod) error {
 		return fmt.Errorf("pod %s/%s is in phase %s, not Running. Konch can only exec into a Running pod",
 			pod.Namespace, pod.Name, pod.Status.Phase)
 	}
-}
-
-// resolveContextName returns the kubectl context name actually in effect
-// (--context flag if set, else the kubeconfig's current-context).
-func resolveContextName(cf *genericclioptions.ConfigFlags) (string, error) {
-	if cf.Context != nil && *cf.Context != "" {
-		return *cf.Context, nil
-	}
-	raw, err := cf.ToRawKubeConfigLoader().RawConfig()
-	if err != nil {
-		return "", fmt.Errorf("load raw kubeconfig: %w", err)
-	}
-	return raw.CurrentContext, nil
 }
 
 func chooseContainer(pod *corev1.Pod, flag string) (name, why string, err error) {
@@ -306,10 +284,6 @@ func konchEnvs(contextName, namespace, pod, container string, wkey workload.Key,
 
 type envVar struct{ K, V string }
 
-// buildCommand renders the exec argv for the chosen shell. The bash path
-// uses process substitution to source a base64-encoded rcfile without
-// writing inside the pod. The sh path skips rcfile injection (writing /tmp
-// fallback is v0.2 territory) but still propagates the KONCH_* env vars.
 func buildCommand(sh shell.Shell, envs []envVar, rcBytes, histBytes []byte) []string {
 	exports := make([]string, 0, len(envs)+2)
 	for _, e := range envs {
@@ -339,13 +313,9 @@ func buildCommand(sh shell.Shell, envs []envVar, rcBytes, histBytes []byte) []st
 		inner := "export " + strings.Join(exports, " ") + "; exec sh -i"
 		return []string{"/bin/sh", "-c", inner}
 	}
-	// Should be unreachable; Detect returns ErrNoShell otherwise.
 	return []string{"/bin/sh", "-i"}
 }
 
-// konchPrologue is the rcfile fragment Konch prepends to the user's content.
-// Only history wiring, a TERM default, and a baseline HISTFILE — no aliases,
-// no prompt, no opinion. The user's rcfile may override anything here.
 func konchPrologue() []byte {
 	return []byte(`# --- Konch prologue ---
 if { [ -z "${TERM-}" ] || [ "$TERM" = "dumb" ]; } && [ -n "${KONCH_LOCAL_TERM-}" ]; then
@@ -364,16 +334,10 @@ PROMPT_COMMAND="history -a${PROMPT_COMMAND:+; $PROMPT_COMMAND}"
 `)
 }
 
-// shellSingleQuote single-quotes s for safe inclusion in a `sh -c` script.
-// Single-quote inside the string is closed-escaped-reopened: '\”.
 func shellSingleQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
-// pullHistory reads the in-pod HISTFILE and merges it back to the host file.
-// Best-effort: a destroyed pod, missing base64, or read-only /tmp all degrade
-// to silent no-ops rather than failing the command. Uses history.WriteMerge
-// so any head bytes we couldn't ship at session start are preserved.
 func pullHistory(client *konchexec.Client, t konchexec.Target, localPath string, snap history.Snapshot) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
