@@ -66,6 +66,10 @@ brews:
     repository:
       owner: christophersherman
       name: homebrew-tap
+      # Cross-repo writes need a token that's scoped to homebrew-tap, not
+      # just the calling repo. Provided as HOMEBREW_TAP_GITHUB_TOKEN secret
+      # in CI; falls back to GITHUB_TOKEN locally (which has user scope).
+      token: "{{ .Env.HOMEBREW_TAP_GITHUB_TOKEN }}"
     homepage: https://github.com/christophersherman/magic-konch
     description: "kubectl plugin: bring your shell into a pod. All hail the Magic Konch."
     license: Apache-2.0
