@@ -1,0 +1,61 @@
+apiVersion: krew.googlecontainertools.github.com/v1alpha2
+kind: Plugin
+metadata:
+  name: konch
+spec:
+  version: v0.1.0
+  homepage: https://github.com/christophersherman/magic-konch
+  shortDescription: Bring your shell into a pod.
+  description: |
+    Magic Konch brings your local shell config into pods when you exec
+    in. Bash history is keyed by Deployment/StatefulSet/CronJob and
+    persisted on the host so it survives pod restarts. Mechanism, not
+    opinion: Konch ships no defaults; whatever's in your rcfile runs.
+
+    Konch reads ~/.config/konch/rc (and an optional per-context override
+    ~/.config/konch/rc.<context>) and sources it via process substitution
+    inside the pod — no writes inside the container, works on read-only
+    rootfs and distroless-shell variants.
+
+    The plugin exports KONCH_POD, KONCH_NAMESPACE, KONCH_CONTEXT,
+    KONCH_WORKLOAD, and KONCH_CONTAINER into the pod session so your
+    rcfile can build a prompt or other context-aware behavior.
+
+    Use `kubectl konch <pod> --probe` for a dry-run that shows the
+    resolved shell, workload key, rcfile sources, and the exact command
+    Konch would exec without actually exec'ing.
+  caveats: |
+    Drop your shell config at ~/.config/konch/rc. Per-context overrides
+    live at ~/.config/konch/rc.<kubectl-context-name>.
+
+    History is stored on the host at
+    ~/.local/share/konch/history/<context>/<namespace>/<workload>.
+  platforms:
+    - selector:
+        matchLabels:
+          os: linux
+          arch: amd64
+      uri: https://github.com/christophersherman/magic-konch/releases/download/v0.1.0/magic-konch_0.1.0_Linux_x86_64.tar.gz
+      sha256: af77319a8e111a8d3e21fc495c1b66ff23c795f89850484115e69183c9f5a3f8
+      bin: kubectl-konch
+    - selector:
+        matchLabels:
+          os: linux
+          arch: arm64
+      uri: https://github.com/christophersherman/magic-konch/releases/download/v0.1.0/magic-konch_0.1.0_Linux_arm64.tar.gz
+      sha256: 844fd3d918ff3a2e6287d30529dd210c54cc58bcfba2d8164177321462367140
+      bin: kubectl-konch
+    - selector:
+        matchLabels:
+          os: darwin
+          arch: amd64
+      uri: https://github.com/christophersherman/magic-konch/releases/download/v0.1.0/magic-konch_0.1.0_Darwin_x86_64.tar.gz
+      sha256: ba9fe6507a9406aec3982cae2f9919687d1f9791f7acc46eb8239ed90baf5820
+      bin: kubectl-konch
+    - selector:
+        matchLabels:
+          os: darwin
+          arch: arm64
+      uri: https://github.com/christophersherman/magic-konch/releases/download/v0.1.0/magic-konch_0.1.0_Darwin_arm64.tar.gz
+      sha256: 0697b11474588401f456ab62fcfb4f0a07dd2fac9a33fd1287ec29a4b4f0949d
+      bin: kubectl-konch
