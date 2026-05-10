@@ -8,6 +8,10 @@ on:
 jobs:
   test:
     runs-on: [self-hosted, linux, docker]
+    container:
+      # act-latest carries node + go + curl/git which the JS-based
+      # actions/checkout and setup-go need at runtime.
+      image: catthehacker/ubuntu:act-latest
     steps:
       - uses: actions/checkout@v4
 
@@ -26,6 +30,8 @@ jobs:
 
   lint:
     runs-on: [self-hosted, linux, docker]
+    container:
+      image: catthehacker/ubuntu:act-latest
     steps:
       - uses: actions/checkout@v4
 
