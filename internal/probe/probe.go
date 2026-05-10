@@ -15,18 +15,21 @@ import (
 
 // Report is the structured input to Render. Every field is human-facing.
 type Report struct {
-	Context        string
-	Namespace      string
-	Pod            string
-	Container      string
-	ContainerWhy   string // "default-container annotation" / "only container" / "--container flag"
-	Shell          shell.Shell
-	Workload       workload.Key
-	HistoryPath    string
-	HistoryBytes   int
-	RCSources      []string // empty => no rcfile sourced
-	SkippedShLines []int    // lines suppressed in sh-mode (alias-only)
-	FinalCommand   []string
+	Version         string
+	Context         string
+	Namespace       string
+	Pod             string
+	Container       string
+	ContainerWhy    string // "default-container annotation" / "only container" / "--container flag"
+	Shell           shell.Shell
+	Workload        workload.Key
+	HistoryPath     string
+	HistoryToShip   int   // bytes that would be uploaded into the pod
+	HistoryFullSize int64 // total bytes on disk (may exceed ToShip if capped)
+	LocalTERM       string
+	RCSources       []string // empty => no rcfile sourced
+	SkippedShLines  []int    // lines suppressed in sh-mode (alias-only)
+	FinalCommand    []string
 }
 
 // Render writes a multi-section probe report to w, ending with the Konch
@@ -35,7 +38,7 @@ type Report struct {
 func Render(w io.Writer, r Report) {
 	p := func(format string, a ...any) { fmt.Fprintf(w, format+"\n", a...) }
 
-	p("Konch dry-run — would exec into:")
+	p("Konch %s dry-run — would exec into:", or(r.Version, "(dev)"))
 	p("  context:    %s", or(r.Context, "(default)"))
 	p("  namespace:  %s", r.Namespace)
 	p("  pod:        %s", r.Pod)
@@ -44,11 +47,25 @@ func Render(w io.Writer, r Report) {
 	p("Resolved:")
 	p("  shell:      %s", r.Shell)
 	p("  workload:   %s", r.Workload)
-	p("  history:    %s (%d bytes on disk)", r.HistoryPath, r.HistoryBytes)
-	p("")
-	if len(r.RCSources) == 0 {
-		p("rcfile:       (none — starting plain shell)")
+	if r.HistoryFullSize > int64(r.HistoryToShip) {
+		p("  history:    %s (%d bytes on disk; %d bytes would upload — head preserved on writeback)",
+			r.HistoryPath, r.HistoryFullSize, r.HistoryToShip)
 	} else {
+		p("  history:    %s (%d bytes)", r.HistoryPath, r.HistoryFullSize)
+	}
+	if r.LocalTERM != "" {
+		p("  TERM:       %s (passed through if pod has none)", r.LocalTERM)
+	}
+	p("")
+	switch {
+	case len(r.RCSources) == 0:
+		p("rcfile:       (none — starting plain shell)")
+	case r.Shell == shell.Sh:
+		p("rcfile sources (found, but NOT sourced — sh-mode in v0.1):")
+		for _, s := range r.RCSources {
+			p("  - %s", s)
+		}
+	default:
 		p("rcfile sources (merged in order, last wins):")
 		for _, s := range r.RCSources {
 			p("  - %s", s)

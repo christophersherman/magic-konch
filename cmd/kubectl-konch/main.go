@@ -34,6 +34,10 @@ import (
 	"github.com/christophersherman/magic-konch/internal/workload"
 )
 
+// version is overwritten at build time via -ldflags '-X main.version=...'.
+// goreleaser drives this from the git tag.
+var version = "dev"
+
 const longHelp = `Magic Konch — your shell, in the pod.
 
 A kubectl plugin that brings your local shell config into pods when you
@@ -77,6 +81,7 @@ func newRootCmd(streams genericiooptions.IOStreams) *cobra.Command {
 		Use:           "kubectl-konch <pod>",
 		Short:         "Bring your shell into a pod.",
 		Long:          longHelp,
+		Version:       version,
 		Args:          cobra.ExactArgs(1),
 		SilenceUsage:  true,
 		SilenceErrors: true,
@@ -103,12 +108,10 @@ func run(
 	if err != nil {
 		return fmt.Errorf("load kubeconfig: %w", err)
 	}
-	loader := cf.ToRawKubeConfigLoader()
-	namespace, _, err := loader.Namespace()
+	namespace, _, err := cf.ToRawKubeConfigLoader().Namespace()
 	if err != nil {
 		return fmt.Errorf("resolve namespace: %w", err)
 	}
-	_ = loader
 	contextName, err := resolveContextName(cf)
 	if err != nil {
 		return err
@@ -121,6 +124,9 @@ func run(
 	pod, err := cs.CoreV1().Pods(namespace).Get(ctx, podName, metav1.GetOptions{})
 	if err != nil {
 		return fmt.Errorf("get pod %s/%s: %w", namespace, podName, err)
+	}
+	if err := guardPodPhase(pod); err != nil {
+		return err
 	}
 	chosen, why, err := chooseContainer(pod, containerFlag)
 	if err != nil {
@@ -139,6 +145,9 @@ func run(
 	}
 	sh, err := shell.Detect(probeFn)
 	if err != nil {
+		if errors.Is(err, shell.ErrNoShell) {
+			return fmt.Errorf("%w. Try `kubectl debug -n %s %s --image=busybox` for an ephemeral debug container", err, namespace, podName)
+		}
 		return err
 	}
 
@@ -152,11 +161,11 @@ func run(
 	if err != nil {
 		return fmt.Errorf("history path: %w", err)
 	}
-	histBytes, err := history.Read(histPath)
+	snap, err := history.Read(histPath)
 	if err != nil {
 		// Read errors on history are non-fatal — start the session anyway.
 		fmt.Fprintf(streams.ErrOut, "konch: warning: read history %s: %v\n", histPath, err)
-		histBytes = nil
+		snap = history.Snapshot{}
 	}
 
 	rc, err := rcfile.Load(contextName)
@@ -169,23 +178,27 @@ func run(
 		rcBytes, skippedShLines = rcfile.SkipForSh(rcBytes)
 	}
 
-	envs := konchEnvs(contextName, namespace, podName, chosen, wkey)
-	finalCmd := buildCommand(sh, envs, rcBytes, histBytes)
+	localTERM := os.Getenv("TERM")
+	envs := konchEnvs(contextName, namespace, podName, chosen, wkey, localTERM)
+	finalCmd := buildCommand(sh, envs, rcBytes, snap.ToShip)
 
 	if probeOnly {
 		probe.Render(streams.Out, probe.Report{
-			Context:        contextName,
-			Namespace:      namespace,
-			Pod:            podName,
-			Container:      chosen,
-			ContainerWhy:   why,
-			Shell:          sh,
-			Workload:       wkey,
-			HistoryPath:    histPath,
-			HistoryBytes:   len(histBytes),
-			RCSources:      rc.Sources,
-			SkippedShLines: skippedShLines,
-			FinalCommand:   finalCmd,
+			Version:         version,
+			Context:         contextName,
+			Namespace:       namespace,
+			Pod:             podName,
+			Container:       chosen,
+			ContainerWhy:    why,
+			Shell:           sh,
+			Workload:        wkey,
+			HistoryPath:     histPath,
+			HistoryToShip:   len(snap.ToShip),
+			HistoryFullSize: snap.FullSize,
+			LocalTERM:       localTERM,
+			RCSources:       rc.Sources,
+			SkippedShLines:  skippedShLines,
+			FinalCommand:    finalCmd,
 		})
 		return nil
 	}
@@ -205,11 +218,29 @@ func run(
 	// History fetch runs even after Ctrl-C / non-zero exit, on a fresh
 	// deadline detached from the (possibly cancelled) parent context.
 	if sh == shell.Bash {
-		if err := pullHistory(client, target, histPath); err != nil {
+		if err := pullHistory(client, target, histPath, snap); err != nil {
 			fmt.Fprintf(streams.ErrOut, "konch: warning: save history: %v\n", err)
 		}
 	}
 	return runErr
+}
+
+// guardPodPhase rejects pods that aren't Running with a clear, actionable
+// message naming the actual phase.
+func guardPodPhase(pod *corev1.Pod) error {
+	switch pod.Status.Phase {
+	case corev1.PodRunning:
+		return nil
+	case corev1.PodPending:
+		return fmt.Errorf("pod %s/%s is Pending (not yet scheduled or starting). Wait, then retry — or run `kubectl describe pod -n %s %s` to see why",
+			pod.Namespace, pod.Name, pod.Namespace, pod.Name)
+	case corev1.PodSucceeded, corev1.PodFailed:
+		return fmt.Errorf("pod %s/%s has terminated (phase=%s). Konch can only exec into a Running pod",
+			pod.Namespace, pod.Name, pod.Status.Phase)
+	default:
+		return fmt.Errorf("pod %s/%s is in phase %s, not Running. Konch can only exec into a Running pod",
+			pod.Namespace, pod.Name, pod.Status.Phase)
+	}
 }
 
 // resolveContextName returns the kubectl context name actually in effect
@@ -257,8 +288,8 @@ func containerNames(pod *corev1.Pod) string {
 	return strings.Join(names, ", ")
 }
 
-func konchEnvs(contextName, namespace, pod, container string, wkey workload.Key) []envVar {
-	return []envVar{
+func konchEnvs(contextName, namespace, pod, container string, wkey workload.Key, localTERM string) []envVar {
+	envs := []envVar{
 		{"KONCH_CONTEXT", contextName},
 		{"KONCH_NAMESPACE", namespace},
 		{"KONCH_POD", pod},
@@ -267,6 +298,10 @@ func konchEnvs(contextName, namespace, pod, container string, wkey workload.Key)
 		{"KONCH_WORKLOAD_KIND", wkey.Kind},
 		{"KONCH_WORKLOAD_NAME", wkey.Name},
 	}
+	if localTERM != "" {
+		envs = append(envs, envVar{"KONCH_LOCAL_TERM", localTERM})
+	}
+	return envs
 }
 
 type envVar struct{ K, V string }
@@ -309,10 +344,14 @@ func buildCommand(sh shell.Shell, envs []envVar, rcBytes, histBytes []byte) []st
 }
 
 // konchPrologue is the rcfile fragment Konch prepends to the user's content.
-// Only history wiring and a defensive HISTFILE default — no aliases, no
-// prompt, no opinion. The user's rcfile may freely override anything here.
+// Only history wiring, a TERM default, and a baseline HISTFILE — no aliases,
+// no prompt, no opinion. The user's rcfile may override anything here.
 func konchPrologue() []byte {
 	return []byte(`# --- Konch prologue ---
+if { [ -z "${TERM-}" ] || [ "$TERM" = "dumb" ]; } && [ -n "${KONCH_LOCAL_TERM-}" ]; then
+  export TERM="$KONCH_LOCAL_TERM"
+fi
+unset KONCH_LOCAL_TERM
 if [ -n "${KONCH_HIST_B64-}" ]; then
   printf '%s' "$KONCH_HIST_B64" | base64 -d > ` + history.PodPath + ` 2>/dev/null || true
   unset KONCH_HIST_B64
@@ -331,10 +370,11 @@ func shellSingleQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
-// pullHistory reads the in-pod HISTFILE and writes it back to the host. Best-
-// effort: a destroyed pod, missing base64, or read-only /tmp all degrade to
-// silent no-ops rather than failing the command.
-func pullHistory(client *konchexec.Client, t konchexec.Target, localPath string) error {
+// pullHistory reads the in-pod HISTFILE and merges it back to the host file.
+// Best-effort: a destroyed pod, missing base64, or read-only /tmp all degrade
+// to silent no-ops rather than failing the command. Uses history.WriteMerge
+// so any head bytes we couldn't ship at session start are preserved.
+func pullHistory(client *konchexec.Client, t konchexec.Target, localPath string, snap history.Snapshot) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	out, exit, err := client.Probe(ctx, t,
@@ -345,7 +385,6 @@ func pullHistory(client *konchexec.Client, t konchexec.Target, localPath string)
 	if exit != 0 || strings.TrimSpace(out) == "" {
 		return nil
 	}
-	// strip whitespace + line breaks; base64 over `kubectl exec` may include them
 	cleaned := bytes.Map(func(r rune) rune {
 		if r == ' ' || r == '\n' || r == '\r' || r == '\t' {
 			return -1
@@ -356,5 +395,5 @@ func pullHistory(client *konchexec.Client, t konchexec.Target, localPath string)
 	if err != nil {
 		return fmt.Errorf("decode history: %w", err)
 	}
-	return history.Write(localPath, data)
+	return history.WriteMerge(localPath, snap, data)
 }

@@ -30,7 +30,8 @@ type ProbeFunc func(cmd []string) (stdout string, exit int, err error)
 var ErrNoShell = errors.New("no usable shell in container")
 
 // Detect probes for bash; falls back to sh; errors with ErrNoShell when
-// neither is present, with a message pointing the user at `kubectl debug`.
+// neither is present. The caller is expected to wrap with a `kubectl debug`
+// suggestion that includes the actual pod name.
 func Detect(probe ProbeFunc) (Shell, error) {
 	out, exit, err := probe([]string{"/bin/sh", "-c", "command -v bash || true"})
 	if err == nil && exit == 0 && strings.TrimSpace(out) != "" {
@@ -40,5 +41,5 @@ func Detect(probe ProbeFunc) (Shell, error) {
 	if err == nil && exit == 0 {
 		return Sh, nil
 	}
-	return "", fmt.Errorf("%w (no bash, no sh) — try `kubectl debug %s` for an ephemeral debug container", ErrNoShell, "<pod>")
+	return "", fmt.Errorf("%w: container has neither /bin/bash nor /bin/sh", ErrNoShell)
 }
