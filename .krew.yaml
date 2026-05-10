@@ -35,27 +35,27 @@ spec:
         matchLabels:
           os: linux
           arch: amd64
-      uri: https://github.com/christophersherman/magic-konch/releases/download/v0.1.0/magic-konch_0.1.0_Linux_x86_64.tar.gz
-      sha256: af77319a8e111a8d3e21fc495c1b66ff23c795f89850484115e69183c9f5a3f8
+      uri: https://github.com/christophersherman/magic-konch/releases/download/v0.1.0/konch_0.1.0_Linux_x86_64.tar.gz
+      sha256: a12c37347c9b6298701af32766904f3b21cad52d014da5b02a0e02d554211d3b
       bin: kubectl-konch
     - selector:
         matchLabels:
           os: linux
           arch: arm64
-      uri: https://github.com/christophersherman/magic-konch/releases/download/v0.1.0/magic-konch_0.1.0_Linux_arm64.tar.gz
-      sha256: 844fd3d918ff3a2e6287d30529dd210c54cc58bcfba2d8164177321462367140
+      uri: https://github.com/christophersherman/magic-konch/releases/download/v0.1.0/konch_0.1.0_Linux_arm64.tar.gz
+      sha256: 18904475007d4eff359fd836faaff3df952a1caf72f15e46db1910c04f470f07
       bin: kubectl-konch
     - selector:
         matchLabels:
           os: darwin
           arch: amd64
-      uri: https://github.com/christophersherman/magic-konch/releases/download/v0.1.0/magic-konch_0.1.0_Darwin_x86_64.tar.gz
-      sha256: ba9fe6507a9406aec3982cae2f9919687d1f9791f7acc46eb8239ed90baf5820
+      uri: https://github.com/christophersherman/magic-konch/releases/download/v0.1.0/konch_0.1.0_Darwin_x86_64.tar.gz
+      sha256: 91f7e3932162af1df2351cc8365ef520e51b1c1aadf20b6ab4912e5b21dbd255
       bin: kubectl-konch
     - selector:
         matchLabels:
           os: darwin
           arch: arm64
-      uri: https://github.com/christophersherman/magic-konch/releases/download/v0.1.0/magic-konch_0.1.0_Darwin_arm64.tar.gz
-      sha256: 0697b11474588401f456ab62fcfb4f0a07dd2fac9a33fd1287ec29a4b4f0949d
+      uri: https://github.com/christophersherman/magic-konch/releases/download/v0.1.0/konch_0.1.0_Darwin_arm64.tar.gz
+      sha256: 7a50440969b79c9b1e5b019d2b5229b3b553ac5aef45c1885cdecd9407dad3e2
       bin: kubectl-konch
