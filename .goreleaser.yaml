@@ -1,0 +1,90 @@
+version: 2
+
+project_name: magic-konch
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: kubectl-konch
+    binary: kubectl-konch
+    main: ./cmd/kubectl-konch
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w
+      - -X main.version={{.Version}}
+    goos:
+      - linux
+      - darwin
+    goarch:
+      - amd64
+      - arm64
+
+archives:
+  - id: kubectl-konch
+    formats: [tar.gz]
+    name_template: >-
+      {{ .ProjectName }}_{{ .Version }}_
+      {{- if eq .Os "darwin" }}Darwin
+      {{- else if eq .Os "linux" }}Linux
+      {{- else }}{{ .Os }}{{ end }}_
+      {{- if eq .Arch "amd64" }}x86_64
+      {{- else }}{{ .Arch }}{{ end }}
+    files:
+      - LICENSE
+      - README.md
+
+checksum:
+  name_template: "checksums.txt"
+
+snapshot:
+  version_template: "{{ incpatch .Version }}-next"
+
+changelog:
+  sort: asc
+  use: git
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^ci:"
+      - "Merge pull request"
+
+release:
+  github:
+    owner: christophersherman
+    name: magic-konch
+  draft: false
+  prerelease: auto
+
+brews:
+  - name: magic-konch
+    repository:
+      owner: christophersherman
+      name: homebrew-tap
+    homepage: https://github.com/christophersherman/magic-konch
+    description: "kubectl plugin: bring your shell into a pod. All hail the Magic Konch."
+    license: Apache-2.0
+    install: |
+      bin.install "kubectl-konch"
+    test: |
+      system "#{bin}/kubectl-konch", "--version"
+    skip_upload: auto
+
+krews:
+  - name: konch
+    homepage: https://github.com/christophersherman/magic-konch
+    short_description: "Bring your shell into a pod."
+    description: |
+      Magic Konch brings your local shell config into pods when you exec
+      in. Bash history is keyed by Deployment/StatefulSet/CronJob and
+      persisted on the host so it survives pod restarts. Mechanism, not
+      opinion: Konch ships no defaults; whatever's in your rcfile runs.
+    repository:
+      owner: christophersherman
+      name: krew-konch
+    skip_upload: "true"
