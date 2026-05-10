@@ -25,7 +25,7 @@ exec in. Mechanism, not opinion.
 ### Homebrew
 
 ```sh
-brew install christophersherman/tap/magic-konch
+brew install christophersherman/tap/konch
 ```
 
 ### `go install`

@@ -1,6 +1,9 @@
 version: 2
 
-project_name: magic-konch
+# project_name drives archive filenames (konch_<version>_<os>_<arch>.tar.gz)
+# and the Homebrew formula filename. The brand is still "Magic Konch"; the
+# CLI surface (binary, brew formula, krew name, archive) is just "konch".
+project_name: konch
 
 before:
   hooks:
@@ -62,7 +65,7 @@ release:
   prerelease: auto
 
 brews:
-  - name: magic-konch
+  - name: konch
     repository:
       owner: christophersherman
       name: homebrew-tap
