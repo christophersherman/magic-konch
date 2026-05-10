@@ -15,6 +15,8 @@ import (
 // Shell is the resolved shell to invoke inside the pod.
 type Shell string
 
+// Bash and Sh are the two shells Detect can return. v0.1 supports nothing
+// else inside the pod — zsh/fish are out of scope per CLAUDE.md.
 const (
 	Bash Shell = "bash"
 	Sh   Shell = "sh"

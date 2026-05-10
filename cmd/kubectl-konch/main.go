@@ -365,7 +365,7 @@ PROMPT_COMMAND="history -a${PROMPT_COMMAND:+; $PROMPT_COMMAND}"
 }
 
 // shellSingleQuote single-quotes s for safe inclusion in a `sh -c` script.
-// Single-quote inside the string is closed-escaped-reopened: '\''.
+// Single-quote inside the string is closed-escaped-reopened: '\”.
 func shellSingleQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }

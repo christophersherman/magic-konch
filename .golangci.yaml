@@ -1,0 +1,40 @@
+version: "2"
+
+run:
+  timeout: 5m
+
+linters:
+  default: none
+  enable:
+    - errcheck
+    - govet
+    - ineffassign
+    - misspell
+    - revive
+    - staticcheck
+    - unconvert
+    - unused
+
+  settings:
+    errcheck:
+      # We intentionally ignore stderr/stdout-write errors and best-effort
+      # cleanups in error paths; nothing actionable on failure.
+      exclude-functions:
+        - fmt.Fprintln
+        - fmt.Fprintf
+        - (*os.File).Close
+        - os.Remove
+
+    revive:
+      rules:
+        - name: var-naming
+        - name: exported
+          arguments: [disableStutteringCheck]
+        - name: package-comments
+        - name: indent-error-flow
+        - name: unreachable-code
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
