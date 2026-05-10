@@ -3,6 +3,7 @@ module github.com/christophersherman/magic-konch
 go 1.26.3
 
 require (
+	github.com/BurntSushi/toml v1.6.0
 	github.com/spf13/cobra v1.10.2
 	k8s.io/api v0.36.0
 	k8s.io/apimachinery v0.36.0
