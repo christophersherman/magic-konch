@@ -10,16 +10,45 @@ func TestBash_SnippetShape(t *testing.T) {
 	s := Bash()
 	for _, want := range []string{
 		"kubectl()",
+		"__konch_detect",
 		"command konch",
 		"command kubectl",
-		"saw_exec=1",
-		`"--container"`,
-		`"--namespace"`,
-		`"--context"`,
+		"__konch_saw_exec=1",
+		"--container",
+		"--namespace",
+		"--context",
 	} {
 		if !strings.Contains(s, want) {
 			t.Errorf("snippet missing %q", want)
 		}
+	}
+}
+
+func TestZsh_ReusesPosixBody(t *testing.T) {
+	if Zsh() == "" {
+		t.Fatal("Zsh() returned empty")
+	}
+	// Body should match Bash() except for the comment header.
+	if Zsh() == Bash() {
+		t.Error("Bash() and Zsh() should differ at least in their headers")
+	}
+	// The function itself should be identical.
+	for _, want := range []string{"kubectl()", "__konch_detect", "command konch", "command kubectl"} {
+		if !strings.Contains(Zsh(), want) {
+			t.Errorf("zsh snippet missing %q", want)
+		}
+	}
+}
+
+func TestZsh_ParsesUnderRealZsh(t *testing.T) {
+	if _, err := exec.LookPath("zsh"); err != nil {
+		t.Skip("zsh not on PATH; skipping syntax check")
+	}
+	cmd := exec.Command("zsh", "-n")
+	cmd.Stdin = strings.NewReader(Zsh())
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("zsh -n rejected snippet:\n%s\n--- snippet ---\n%s", out, Zsh())
 	}
 }
 

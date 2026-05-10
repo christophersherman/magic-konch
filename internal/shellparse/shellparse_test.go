@@ -148,10 +148,32 @@ func TestParseBash_IgnoresAliasListAndExportLookup(t *testing.T) {
 	}
 }
 
-func TestAutoDetectBashPaths(t *testing.T) {
-	// Just verify the shape — env-dependent so we can't assert exact paths.
-	got := AutoDetectBashPaths()
+func TestAutoDetectPaths_BashShell(t *testing.T) {
+	t.Setenv("SHELL", "/bin/bash")
+	got := AutoDetectPaths()
 	if len(got) != 2 {
-		t.Errorf("expected 2 paths (.bashrc + .bash_profile), got %v", got)
+		t.Errorf("expected 2 bash paths, got %v", got)
+	}
+	if filepath.Base(got[0]) != ".bashrc" {
+		t.Errorf("expected .bashrc first, got %q", got[0])
+	}
+}
+
+func TestAutoDetectPaths_ZshShell(t *testing.T) {
+	t.Setenv("SHELL", "/bin/zsh")
+	got := AutoDetectPaths()
+	if len(got) != 2 {
+		t.Errorf("expected 2 zsh paths, got %v", got)
+	}
+	if filepath.Base(got[0]) != ".zshrc" {
+		t.Errorf("expected .zshrc first, got %q", got[0])
+	}
+}
+
+func TestAutoDetectPaths_FishShellEmpty(t *testing.T) {
+	t.Setenv("SHELL", "/usr/local/bin/fish")
+	got := AutoDetectPaths()
+	if len(got) != 0 {
+		t.Errorf("fish should return no paths (phase B), got %v", got)
 	}
 }

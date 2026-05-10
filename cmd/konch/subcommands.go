@@ -33,10 +33,13 @@ Supported shells: bash (zsh and fish coming in v0.2.x).`,
 			case "bash":
 				_, err := fmt.Fprint(streams.Out, cliinit.Bash())
 				return err
-			case "zsh", "fish":
-				return fmt.Errorf("shell %q is coming in v0.2.x — bash only for now", args[0])
+			case "zsh":
+				_, err := fmt.Fprint(streams.Out, cliinit.Zsh())
+				return err
+			case "fish":
+				return fmt.Errorf("shell %q is coming in v0.2.x — bash and zsh only for now", args[0])
 			default:
-				return fmt.Errorf("unsupported shell %q (try: bash)", args[0])
+				return fmt.Errorf("unsupported shell %q (try: bash, zsh)", args[0])
 			}
 		},
 	}

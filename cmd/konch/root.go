@@ -159,7 +159,7 @@ func runExec(
 	}
 	sources := konchCfg.Shell.Sources
 	if len(sources) == 0 {
-		sources = shellparse.AutoDetectBashPaths()
+		sources = shellparse.AutoDetectPaths()
 	}
 	parsed, parseErr := shellparse.ParseBash(sources)
 	if parseErr != nil {

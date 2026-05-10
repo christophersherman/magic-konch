@@ -60,17 +60,33 @@ func ParseBash(paths []string) (Result, error) {
 	return r, nil
 }
 
-// AutoDetectBashPaths returns the conventional bash sources for the
-// current user, regardless of $SHELL. Callers in v0.2 phase A always
-// pass these; phase B adds zsh/fish-aware detection.
-func AutoDetectBashPaths() []string {
+// AutoDetectPaths returns the conventional shellrc paths for the
+// current user, based on $SHELL. zsh aliases are typically bash-
+// compatible at the syntax level (`alias NAME='VALUE'`), so the bash
+// parser handles them well enough — values it can't translate land in
+// Skipped with a reason. fish uses different syntax and gets its own
+// parser in v0.2 phase B; for now this returns nil for fish users.
+func AutoDetectPaths() []string {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return nil
 	}
-	return []string{
-		filepath.Join(home, ".bashrc"),
-		filepath.Join(home, ".bash_profile"),
+	switch filepath.Base(os.Getenv("SHELL")) {
+	case "zsh":
+		return []string{
+			filepath.Join(home, ".zshrc"),
+			filepath.Join(home, ".zshenv"),
+		}
+	case "fish":
+		// fish syntax is different; the bash parser would treat almost
+		// every line as "skip with reason." Better to return nothing and
+		// have phase B add a proper fish parser.
+		return nil
+	default:
+		return []string{
+			filepath.Join(home, ".bashrc"),
+			filepath.Join(home, ".bash_profile"),
+		}
 	}
 }
 
