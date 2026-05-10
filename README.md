@@ -22,13 +22,6 @@ exec in. Mechanism, not opinion.
 
 ## Install
 
-### Krew (recommended)
-
-```sh
-kubectl krew install konch
-kubectl konch <pod>
-```
-
 ### Homebrew
 
 ```sh
@@ -40,6 +33,24 @@ brew install christophersherman/tap/magic-konch
 ```sh
 go install github.com/christophersherman/magic-konch/cmd/kubectl-konch@latest
 ```
+
+### Krew
+
+```sh
+kubectl krew install konch
+```
+
+> Pending submission to [`kubernetes-sigs/krew-index`](https://github.com/kubernetes-sigs/krew-index).
+> Until that merges you can install from the in-repo manifest:
+>
+> ```sh
+> kubectl krew install --manifest=https://raw.githubusercontent.com/christophersherman/magic-konch/main/.krew.yaml
+> ```
+
+### Direct binary download
+
+Pre-built binaries for linux/darwin × amd64/arm64 are attached to every
+[GitHub release](https://github.com/christophersherman/magic-konch/releases).
 
 `kubectl-konch` is the binary; `kubectl konch <pod>` is how you invoke it
 (kubectl auto-discovers `kubectl-*` binaries on `$PATH`).
